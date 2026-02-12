@@ -80,8 +80,8 @@ class Constrainer:
         """
         self.free_dofs = [i for i in range(len(f)) if i not in self.cons_dofs]
         
-        Kff #= k[np.ix_(YOUR CODE HERE)]
-        Ff # YOUR CODE HERE
+        Kff = k[np.ix_(self.free_dofs, self.free_dofs)]
+        Ff = f[self.free_dofs]
 
         return Kff, Ff
 
@@ -99,7 +99,7 @@ class Constrainer:
         """
         #YOUR CODE HERE
         
-        return #YOUR CODE HERE
+        return np.array([])
 
     def __str__(self):
         """
@@ -108,4 +108,4 @@ class Constrainer:
         Returns:
             str: A string representation of the Constrainer object.
         """
-        return f"This constrainer has constrained the degrees of freedom: {self.cons_dofs} with corresponding constrained values: {self.cons_vals})"
+        return f"This constrainer has constrained the degrees of freedom: {self.cons_dofs} with corresponding constrained values: {self.cons_vals}"
