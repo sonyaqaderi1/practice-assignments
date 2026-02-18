@@ -68,15 +68,14 @@ class Element:
 
         self.L = np.sqrt((self.nodes[1].x - self.nodes[0].x)**2.0 + (self.nodes[1].z - self.nodes[0].z)**2.0)
 
-        # Make use of numpy.arctan2 to return the angle between -pi() and pi()
-        alpha = np.arctan2 (self.nodes[1].z - self.nodes[0].z, self.nodes[1].x - self.nodes[0].x)
+        alpha = np.arctan2( - (self.nodes[1].z - self.nodes[0].z) , (self.nodes[1].x - self.nodes[0].x))
 
         T = np.zeros((6, 6))
 
         T[0, 0] = T[1, 1] = T[3, 3] = T[4, 4] = np.cos(alpha)
-        T[0, 1] = T[3, 4] = np.sin(alpha)
-        T[1, 0] = T[4, 3] = -np.sin(alpha)
-        T[2, 2] = T[5, 5] = 1.0
+        T[0, 1] = T[3, 4] = -np.sin(alpha)
+        T[1, 0] = T[4, 3] = np.sin(alpha)
+        T[2, 2] = T[5, 5] = 1
 
         self.T = T
         self.Tt = np.transpose(T)
@@ -130,21 +129,19 @@ class Element:
         EI = self.EI
         L = self.L
 
-        # Axial stiffness terms
+        # Extension contribution
+
         k[0, 0] = k[3, 3] = EA / L
-        k[0, 3] = k[3, 0] = -EA / L
-        
-        # Bending stiffness terms
-        k[1, 1] = k[4, 4] = 12 * EI / (L**3)
-        k[1, 2] = k[2, 1] = 6 * EI / (L**2)
-        k[1, 4] = k[4, 1] = -12 * EI / (L**3)
-        k[1, 5] = k[5, 1] = 6 * EI / (L**2)
-        
-        k[2, 2] = k[5, 5] = 4 * EI / L
-        k[2, 4] = k[4, 2] = -6 * EI / (L**2)
-        k[2, 5] = k[5, 2] = 2 * EI / L
-        
-        k[4, 5] = k[5, 4] = -6 * EI / (L**2)
+        k[3, 0] = k[0, 3] = -EA / L
+
+        # Bending contribution
+
+        k[1, 1] = k[4, 4] = 12.0 * EI / L / L / L
+        k[1, 4] = k[4, 1] = -12.0 * EI / L / L / L
+        k[1, 2] = k[2, 1] = k[1, 5] = k[5, 1] = -6.0 * EI / L / L
+        k[2, 4] = k[4, 2] = k[4, 5] = k[5, 4] = 6.0 * EI / L / L
+        k[2, 2] = k[5, 5] = 4.0 * EI / L
+        k[2, 5] = k[5, 2] = 2.0 * EI / L
 
         return np.matmul(np.matmul(self.Tt, k), self.T)
 
@@ -153,7 +150,7 @@ class Element:
         Adds a distributed load to the element.
 
         Parameters:
-            q (list): List of distributed load in local x and z direction [q_axial, q_transverse].
+            q (list): List of distributed load in local x and z direction.
 
         Returns:
             None
@@ -162,26 +159,12 @@ class Element:
         l = self.L
         self.q = np.array(q)
 
-        # Compute equivalent nodal loads for constant distributed load
-        # For axial load q[0]: equally distributed to both nodes
-        # For transverse load q[1]: fixed-fixed beam equivalent loads
-        self.local_element_load = np.array([
-            q[0] * l / 2,              # axial force at node 1
-            q[1] * l / 2,               # shear force at node 1
-            q[1] * l**2 / 12,           # moment at node 1
-            q[0] * l / 2,               # axial force at node 2
-            q[1] * l / 2,               # shear force at node 2
-            -q[1] * l**2 / 12           # moment at node 2 (negative for consistency)
-        ])
+        local_element_load = [0.5 * q[0] * l, 0.5 * q[1] * l, -1.0 / 12.0 * q[1] * l * l, 0.5 * q[0] * l, 0.5 * q[1] * l, 1.0 / 12.0 * q[1] * l * l]
 
-        # Transform local element loads to global coordinate system 
-        global_element_load = np.matmul(self.Tt, self.local_element_load)
+        global_element_load = np.matmul(self.Tt, np.array(local_element_load))
 
-        # Add the equivalent loads to the nodes
-        # Node 1 gets the first 3 DOFs (axial, shear, moment)
-        self.nodes[0].add_load(global_element_load[0:3])
-        # Node 2 gets the last 3 DOFs (axial, shear, moment)
-        self.nodes[1].add_load(global_element_load[3:6])
+        self.nodes[0].add_load(global_element_load[0:3]) #YOUR CODE HERE
+        self.nodes[1].add_load(global_element_load[3:6]) #YOUR CODE HERE
 
     def bending_moments(self, u_global, num_points=2):
         """
@@ -199,53 +182,22 @@ class Element:
         q = self.q[1]
         EI = self.EI
 
-        # Transform global displacements to local coordinate system
-        local_disp = np.matmul(self.T, u_global)
-        
-        # Extract local displacements
-        u1 = local_disp[0]  # axial displacement at node 1
-        w1 = local_disp[1]  # transverse displacement at node 1
-        theta1 = local_disp[2]  # rotation at node 1
-        u2 = local_disp[3]  # axial displacement at node 2
-        w2 = local_disp[4]  # transverse displacement at node 2
-        theta2 = local_disp[5]  # rotation at node 2
-
-        # Points along the element
         local_x = np.linspace(0.0, l, num_points)
-        M = np.zeros(num_points)
 
-        # For a beam with constant distributed load q, the bending moment is:
-        # M(x) = -EI * d²w/dx²
-        # Using the cubic Hermite shape functions for w(x):
-        # w(x) = w1*N1 + theta1*N2 + w2*N3 + theta2*N4 + particular solution for distributed load
-        # The particular solution for constant q is: (q/(24EI)) * x² * (x - l)²
+        local_disp = np.matmul(self.T, u_global)
+
+        w_1 = local_disp[1]
+        phi_1 = local_disp[2]
+        w_2 = local_disp[4]
+        phi_2 = local_disp[5]
+
+        M = (-l ** 5.0 * q + 6.0 * l ** 4.0 * q * local_x
+             - 6.0 * q * local_x * local_x * l ** 3.0 - 48.0 * (phi_1 + phi_2 / 2.0) * EI * l ** 2.0
+             + 72.0 * EI * ((phi_1 + phi_2) * local_x + w_1 - w_2) * l - 144.0 * local_x * EI * (w_1 - w_2)) / 12.0 / l ** 3.0
         
-        for i, x in enumerate(local_x):
-            # Bending moment from Hermite shape functions (second derivatives)
-            # Second derivatives of shape functions:
-            # N1''(x) = (12x - 6l)/l³
-            # N2''(x) = (6x - 4l)/l²
-            # N3''(x) = (-12x + 6l)/l³
-            # N4''(x) = (6x - 2l)/l²
-            
-            M_hermite = EI * (
-                w1 * (12*x - 6*l) / (l**3) +
-                theta1 * (6*x - 4*l) / (l**2) +
-                w2 * (-12*x + 6*l) / (l**3) +
-                theta2 * (6*x - 2*l) / (l**2)
-            )
-            
-            # Particular solution for constant distributed load
-            # M_particular = -EI * (d²/dx² of particular solution)
-            # For w_particular = (q/(24EI)) * x² * (x - l)²
-            # M_particular = -(q/2) * (x² - l*x + l²/6)
-            M_particular = -(q/2) * (x**2 - l*x + l**2/6)
-            
-            M[i] = M_hermite + M_particular
-
         return M
     
-    def full_displacement(self, u_global, num_points=2):
+    def full_displacement (self, u_global, num_points=2):
         """
         Calculates the displacement along the element.
 
@@ -256,47 +208,26 @@ class Element:
         Returns:
             numpy.ndarray: Array of displacement along the element.
         """
-        
-        l = self.L
-        q_axial = self.q[0]
-        q_trans = self.q[1]
+        L = self.L
+        q = self.q[1]
+        q_x = self.q[0]
+        EI= self.EI
         EA = self.EA
-        EI = self.EI
 
-        # Transform global displacements to local coordinate system
-        local_disp = np.matmul(self.T, u_global)
+        x = np.linspace ( 0.0, L, num_points )
+
+        ul = np.matmul ( self.T, u_global )
+
+        u_1   = ul[0]
+        w_1   = ul[1]
+        phi_1 = ul[2]
+        u_2   = ul[3]
+        w_2   = ul[4]
+        phi_2 = ul[5]
+
+        u = q_x*(-L*x/(2*EA) + x**2/(2*EA)) + u_1*(1 - x/L) + u_2*x/L
+        w = phi_1*(-x + 2*x**2/L - x**3/L**2) + phi_2*(x**2/L - x**3/L**2) + q*(L**2*x**2/(24*EI) - L*x**3/(12*EI) + x**4/(24*EI)) + w_1*(1 - 3*x**2/L**2 + 2*x**3/L**3) + w_2*(3*x**2/L**2 - 2*x**3/L**3)
         
-        # Extract local displacements
-        u1 = local_disp[0]  # axial displacement at node 1
-        w1 = local_disp[1]  # transverse displacement at node 1
-        theta1 = local_disp[2]  # rotation at node 1
-        u2 = local_disp[3]  # axial displacement at node 2
-        w2 = local_disp[4]  # transverse displacement at node 2
-        theta2 = local_disp[5]  # rotation at node 2
-
-        # Points along the element
-        local_x = np.linspace(0.0, l, num_points)
-        u = np.zeros(num_points)  # axial displacement
-        w = np.zeros(num_points)  # transverse displacement
-
-        for i, x in enumerate(local_x):
-            # Axial displacement (linear interpolation + particular solution for distributed axial load)
-            # For constant axial load q_axial, particular solution: (q_axial/(2EA)) * x * (l - x)
-            u[i] = u1 * (1 - x/l) + u2 * (x/l) + (q_axial/(2*EA)) * x * (l - x)
-            
-            # Transverse displacement using Hermite shape functions + particular solution for distributed transverse load
-            # Hermite shape functions:
-            N1 = 1 - 3*(x/l)**2 + 2*(x/l)**3
-            N2 = x * (1 - x/l)**2
-            N3 = 3*(x/l)**2 - 2*(x/l)**3
-            N4 = x * ((x/l)**2 - x/l)
-            
-            # Particular solution for constant transverse load q_trans
-            # w_particular = (q_trans/(24*EI)) * x² * (x - l)²
-            w_particular = (q_trans/(24*EI)) * x**2 * (x - l)**2
-            
-            w[i] = w1 * N1 + theta1 * N2 + w2 * N3 + theta2 * N4 + w_particular
-
         return u, w
     
     def plot_moment_diagram (self, u_elem, num_points=10, global_c=False, scale=1.0):
@@ -414,3 +345,107 @@ class Element:
         The string includes the values of the node1, node2 attributes.
         """
         return f"Element connecting:\nnode #1:\n {self.nodes[0]}\nwith node #2:\n {self.nodes[1]}"
+    
+class EB_point_load_element (Element):
+    """
+    The EB_point_load_element class describes an element combining extension and Euler-Bernoulli bending with a point load.
+
+    Attributes:
+        node1 (Node): The first node of the element.
+        node2 (Node): The second node of the element.
+        EA (float): Axial stiffness of the element.
+        EI (float): Bending stiffness of the element.
+        F (float): Point load in local z direction.
+        L (float): Length of the element.
+
+    Methods:
+        add_point_load_halfway(self, F): Adds a point load to the element.
+        bending_moments(u_global, num_points=2): Calculates the bending moments along the element.
+        full_displacement(u_global, num_points=2): Calculates the displacement along the element.
+
+    Inherits from:
+        Element: Base class for all structural elements.
+    """
+    def add_point_load_halfway(self, F):
+        """
+        Adds a point load to the element.
+
+        Parameters:
+            F (float): Point load in local z direction.
+
+        Returns:
+            None
+        """
+        self.F = F
+        l = self.L
+
+        el = [0, F / 2, - F * l / 8, 0, F / 2, F * l / 8]
+
+        eg = np.matmul(self.Tt, np.array(el))
+
+        self.nodes[0].add_load(eg[0:3])
+        self.nodes[1].add_load(eg[3:6])
+
+    def bending_moments (self, u_global, num_points=2):
+        """
+        Calculates the bending moments along the element.
+
+        Args:
+            u_global (numpy.ndarray): Global displacement vector of the element.
+            num_points (int, optional): Number of points to calculate the bending moments. Default is 2.
+
+        Returns:
+            numpy.ndarray: Array of bending moments along the element.
+        """
+        L = self.L
+        F = self.F
+        EI= self.EI
+
+        x = np.linspace ( 0.0, L, num_points )
+        M  = np.zeros(num_points)
+
+        ul = np.matmul ( self.T, u_global )
+        
+        w_1   = ul[1]
+        phi_1 = ul[2]
+        w_2   = ul[4]
+        phi_2 = ul[5]
+        
+        M = -F*L/8 + F*x/2 + phi_1*(-4*EI/L + 6*EI*x/L**2) + phi_2*(-2*EI/L + 6*EI*x/L**2) + w_1*(6*EI/L**2 - 12*EI*x/L**3) + w_2*(-6*EI/L**2 + 12*EI*x/L**3)
+        index_halfway = int(num_points/2)
+        M[index_halfway:] += - F*(-L/2 + x[index_halfway:])
+        return M
+    
+    def full_displacement (self, u_global, num_points=2):
+        """
+        Calculates the displacement along the element.
+
+        Args:
+            u_global (numpy.ndarray): Global displacement vector of the element.
+            num_points (int, optional): Number of points to calculate the bending moments. Default is 2.
+
+        Returns:
+            numpy.ndarray: Array of displacement along the element.
+        """
+        L = self.L
+        F = self.F
+        q_x = self.q[0]
+        EI= self.EI
+        EA = self.EA
+
+        x = np.linspace ( 0.0, L, num_points )
+
+        ul = np.matmul ( self.T, u_global )
+        
+        u_1   = ul[0]
+        w_1   = ul[1]
+        phi_1 = ul[2]
+        u_2   = ul[3]
+        w_2   = ul[4]
+        phi_2 = ul[5]
+        
+        u = q_x*(-L*x/(2*EA) + x**2/(2*EA)) + u_1*(1 - x/L) + u_2*x/L
+        w = phi_1*(-x + 2*x**2/L - x**3/L**2) + phi_2*(x**2/L - x**3/L**2) + w_1*(1 - 3*x**2/L**2 + 2*x**3/L**3) + w_2*(3*x**2/L**2 - 2*x**3/L**3) + F*L*x**2/(16*EI) - F*x**3/(12*EI)
+        index_halfway = int(num_points/2)
+        w[index_halfway:] += F*(x[index_halfway:] - L/2)**3/(6*EI)
+        return u, w
