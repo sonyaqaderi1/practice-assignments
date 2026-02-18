@@ -26,11 +26,10 @@ class Constrainer:
         """
         self.cons_dofs = []
         self.cons_vals = []
-        self.free_dofs = []
 
     def fix_dof (self, node, dof, value = 0):
         """
-        Fixes a degree of freedom  at a specific value.
+        Fixes a degree of freedom at a specific value.
 
         Args:
             node (Node): The node object.
@@ -39,17 +38,6 @@ class Constrainer:
         """
         self.cons_dofs.append(node.dofs[dof])
         self.cons_vals.append(value)
-
-    def prescribe_dof (self, node, dof, value):
-        """
-        Prescribes a degree of freedom at a specific value.
-
-        Args:
-            node (Node): The node object.
-            dof (int): The index of the degree of freedom to fix.
-            value (float): The value to fix the degree of freedom at.
-        """
-        self.fix_dof(node, dof, value)
  
     def fix_node (self, node):
         """
@@ -71,22 +59,16 @@ class Constrainer:
         Returns:
             numpy.ndarray: The combined displacements of all degrees of freedom.
         """
-        n_total = len(self.free_dofs) + len(self.cons_dofs)
-        u_full = np.zeros(n_total)
+        u_full = np.zeros(len(self.free_dofs) + len(self.cons_dofs))
         
-        # This assumes free_dofs and cons_dofs are indices, not DOF numbers
-        # We need to be careful with this implementation
-        for i, dof in enumerate(self.free_dofs):
-            u_full[dof] = u_free[i]
-        
-        for i, dof in enumerate(self.cons_dofs):
-            u_full[dof] = self.cons_vals[i]
+        u_full[self.free_dofs] = u_free
+        u_full[self.cons_dofs] = self.cons_vals
         
         return u_full
     
     def constrain (self, k, f):
         """
-        Applies the constraints to the stiffness matrix and load vector, accounting for non-zero prescribed displacements.
+        Applies the constraints to the stiffness matrix and load vector.
 
         Args:
             k (numpy.ndarray): The stiffness matrix.
@@ -95,20 +77,15 @@ class Constrainer:
         Returns:
             tuple: A tuple containing the stiffness matrix corresponding to free dofs and the corresponding load vector.
         """
-        n_dofs = len(f)
-        self.free_dofs = [i for i in range(n_dofs) if i not in self.cons_dofs]
+        self.free_dofs = [i for i in range(len(f)) if i not in self.cons_dofs]
         
-        Kff = k[np.ix_(self.free_dofs, self.free_dofs)]
-        Kfc = k[np.ix_(self.free_dofs, self.cons_dofs)]
-        
-        uc = np.array(self.cons_vals)
-        
-        # Reduced load vector: Ff - Kfc * uc
-        Ff = f[self.free_dofs] - np.matmul(Kfc, uc)
+        Kff = k[np.ix_(self.free_dofs,self.free_dofs)]
+        Kfc = k[np.ix_(self.free_dofs,self.cons_dofs)]
+        Ff = f[self.free_dofs]
 
-        return Kff, Ff
+        return Kff, Ff - np.matmul(Kfc,self.cons_vals)
 
-    def support_reactions (self, k, u_free, f):       
+    def support_reactions (self,k,u_free,f):       
         """
         Calculates the support reactions based on the constrained displacements.
 
@@ -120,13 +97,10 @@ class Constrainer:
         Returns:
             numpy.ndarray: The support reactions.
         """
-        u_full = self.full_disp(u_free)
-        reactions = np.matmul(k, u_full) - f
+        Kcf = k[np.ix_(self.cons_dofs,self.free_dofs)]
+        Kcc = k[np.ix_(self.cons_dofs,self.cons_dofs)]
         
-        # Return only the reactions for constrained DOFs
-        # If no constraints, this returns an empty array
-
-        return reactions[self.cons_dofs]
+        return np.matmul(Kcf,u_free) + np.matmul(Kcc,self.cons_vals) - f[self.cons_dofs]
 
     def __str__(self):
         """
@@ -135,4 +109,4 @@ class Constrainer:
         Returns:
             str: A string representation of the Constrainer object.
         """
-        return f"This constrainer has constrained the degrees of freedom: {self.cons_dofs} with corresponding constrained values: {self.cons_vals}"
+        return f"This constrainer has constrained the degrees of freedom: {self.cons_dofs} with corresponding constrained values: {self.cons_vals})"
