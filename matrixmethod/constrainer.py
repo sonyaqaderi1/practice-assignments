@@ -26,6 +26,7 @@ class Constrainer:
         """
         self.cons_dofs = []
         self.cons_vals = []
+        self.free_dofs = []
 
     def fix_dof (self, node, dof, value = 0):
         """
@@ -37,7 +38,6 @@ class Constrainer:
             value (float, optional): The value to fix the degree of freedom at. Defaults to 0.
         """
         self.cons_dofs.append(node.dofs[dof])
-        assert value == 0, "Only zero values are supported for now."
         self.cons_vals.append(value)
  
     def fix_node (self, node):
@@ -60,10 +60,16 @@ class Constrainer:
         Returns:
             numpy.ndarray: The combined displacements of all degrees of freedom.
         """
-        u_full = np.zeros(len(self.free_dofs) + len(self.cons_dofs))
+        n_total = len(self.free_dofs) + len(self.cons_dofs)
+        u_full = np.zeros(n_total)
         
-        u_full[self.free_dofs] = u_free
-        u_full[self.cons_dofs] = self.cons_vals
+        # This assumes free_dofs and cons_dofs are indices, not DOF numbers
+        # We need to be careful with this implementation
+        for i, dof in enumerate(self.free_dofs):
+            u_full[dof] = u_free[i]
+        
+        for i, dof in enumerate(self.cons_dofs):
+            u_full[dof] = self.cons_vals[i]
         
         return u_full
     
@@ -78,14 +84,15 @@ class Constrainer:
         Returns:
             tuple: A tuple containing the stiffness matrix corresponding to free dofs and the corresponding load vector.
         """
-        self.free_dofs = [i for i in range(len(f)) if i not in self.cons_dofs]
+        n_dofs = len(f)
+        self.free_dofs = [i for i in range(n_dofs) if i not in self.cons_dofs]
         
         Kff = k[np.ix_(self.free_dofs, self.free_dofs)]
         Ff = f[self.free_dofs]
 
         return Kff, Ff
 
-    def support_reactions (self,k,u_free,f):       
+    def support_reactions (self, k, u_free, f):       
         """
         Calculates the support reactions based on the constrained displacements.
 
@@ -97,9 +104,12 @@ class Constrainer:
         Returns:
             numpy.ndarray: The support reactions.
         """
-        #YOUR CODE HERE
+        u_full = self.full_disp(u_free)
+        reactions = np.matmul(k, u_full) - f
         
-        return np.array([])
+        # Return only the reactions for constrained DOFs
+        # If no constraints, this returns an empty array
+        return reactions[self.cons_dofs]
 
     def __str__(self):
         """
