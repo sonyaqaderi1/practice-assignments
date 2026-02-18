@@ -39,6 +39,17 @@ class Constrainer:
         """
         self.cons_dofs.append(node.dofs[dof])
         self.cons_vals.append(value)
+
+    def prescribe_dof (self, node, dof, value):
+        """
+        Prescribes a degree of freedom at a specific value.
+
+        Args:
+            node (Node): The node object.
+            dof (int): The index of the degree of freedom to fix.
+            value (float): The value to fix the degree of freedom at.
+        """
+        self.fix_dof(node, dof, value)
  
     def fix_node (self, node):
         """
@@ -75,7 +86,7 @@ class Constrainer:
     
     def constrain (self, k, f):
         """
-        Applies the constraints to the stiffness matrix and load vector.
+        Applies the constraints to the stiffness matrix and load vector, accounting for non-zero prescribed displacements.
 
         Args:
             k (numpy.ndarray): The stiffness matrix.
@@ -88,7 +99,12 @@ class Constrainer:
         self.free_dofs = [i for i in range(n_dofs) if i not in self.cons_dofs]
         
         Kff = k[np.ix_(self.free_dofs, self.free_dofs)]
-        Ff = f[self.free_dofs]
+        Kfc = k[np.ix_(self.free_dofs, self.cons_dofs)]
+        
+        uc = np.array(self.cons_vals)
+        
+        # Reduced load vector: Ff - Kfc * uc
+        Ff = f[self.free_dofs] - np.matmul(Kfc, uc)
 
         return Kff, Ff
 
@@ -109,6 +125,7 @@ class Constrainer:
         
         # Return only the reactions for constrained DOFs
         # If no constraints, this returns an empty array
+
         return reactions[self.cons_dofs]
 
     def __str__(self):
